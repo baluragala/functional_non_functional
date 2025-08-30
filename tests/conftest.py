@@ -84,15 +84,51 @@ def chrome_driver():
     chrome_options.add_argument('--disable-extensions')
     chrome_options.add_argument('--disable-web-security')
     chrome_options.add_argument('--allow-running-insecure-content')
+    chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
     
-    # Use webdriver-manager to automatically download and manage ChromeDriver
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
+    try:
+        # First try system chromedriver (more reliable)
+        service = Service()  # Will use PATH
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        
+    except Exception as e:
+        # Fallback: try webdriver-manager
+        logger.warning(f"System ChromeDriver failed: {e}. Trying webdriver-manager...")
+        try:
+            driver_path = ChromeDriverManager().install()
+            
+            # Fix for macOS ARM64 - ensure we get the actual chromedriver executable
+            if 'THIRD_PARTY_NOTICES' in driver_path:
+                import os
+                driver_dir = os.path.dirname(driver_path)
+                actual_driver = os.path.join(driver_dir, 'chromedriver')
+                if os.path.exists(actual_driver):
+                    driver_path = actual_driver
+                else:
+                    # Look for chromedriver in parent directories
+                    parent_dir = os.path.dirname(driver_dir)
+                    for root, dirs, files in os.walk(parent_dir):
+                        if 'chromedriver' in files and not files[files.index('chromedriver')].endswith('.chromedriver'):
+                            driver_path = os.path.join(root, 'chromedriver')
+                            break
+            
+            service = Service(driver_path)
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            
+        except Exception as e2:
+            logger.error(f"All ChromeDriver attempts failed: {e2}")
+            pytest.skip(f"ChromeDriver not available: {e2}")
+    
     driver.implicitly_wait(10)
     
     yield driver
     
-    driver.quit()
+    try:
+        driver.quit()
+    except Exception:
+        pass  # Ignore cleanup errors
 
 @pytest.fixture
 def firefox_driver():
