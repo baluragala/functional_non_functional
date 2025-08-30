@@ -1,0 +1,46 @@
+```mermaid
+
+graph TB
+    subgraph "Flask Authentication System"
+        A[Flask Web App<br/>User Registration & Login] --> B[HTML Templates<br/>Bootstrap UI]
+        A --> C[SQLite Database<br/>User Data & Sessions]
+        A --> D[API Endpoints<br/>Health, Users, Login Attempts]
+    end
+    
+    subgraph "Functional Testing"
+        E[API Tests<br/>pytest] --> A
+        F[UI Tests<br/>Selenium] --> B
+        G[Integration Tests<br/>Database & Sessions] --> C
+    end
+    
+    subgraph "Non-Functional Testing"
+        H[Security Tests<br/>XSS, SQL Injection, Auth] --> A
+        I[Performance Tests<br/>Response Times, Throughput] --> A
+        J[Load Tests<br/>Locust, Concurrent Users] --> A
+    end
+    
+    subgraph "CI/CD Pipeline"
+        K[Azure Pipelines<br/>Multi-stage Testing] --> E
+        K --> F
+        K --> H
+        K --> I
+        L[GitHub Actions<br/>Parallel Testing] --> E
+        L --> F
+        L --> H
+        L --> I
+    end
+    
+    subgraph "Docker Support"
+        M[Multi-stage Dockerfile<br/>App, Test, CI Images] --> A
+        N[Docker Compose<br/>Different Test Profiles] --> M
+        O[Containerized Testing<br/>Consistent Environment] --> N
+    end
+    
+    subgraph "Test Reports"
+        P[HTML Reports<br/>pytest-html] --> E
+        Q[Coverage Reports<br/>pytest-cov] --> E
+        R[Load Test Reports<br/>Locust HTML] --> J
+        S[Security Reports<br/>Bandit JSON] --> H
+    end
+
+```

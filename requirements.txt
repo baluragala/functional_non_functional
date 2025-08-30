@@ -1,0 +1,30 @@
+# Flask Web Application Dependencies
+Flask==2.3.3
+Werkzeug==2.3.7
+
+# Testing Dependencies
+pytest==7.4.2
+pytest-html==3.2.0
+pytest-cov==4.1.0
+pytest-xdist==3.3.1
+pytest-mock==3.11.1
+
+# Selenium for UI Testing
+selenium==4.15.0
+webdriver-manager==4.0.1
+
+# Security Testing
+requests==2.31.0
+bandit==1.7.5
+
+# Performance Testing
+locust==2.17.0
+
+# Code Quality
+flake8==6.1.0
+black==23.9.1
+pylint==2.17.7
+
+# Utilities
+python-dotenv==1.0.0
+colorama==0.4.6

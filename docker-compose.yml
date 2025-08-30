@@ -1,0 +1,203 @@
+version: "3.8"
+
+services:
+  # Main application service
+  app:
+    build:
+      context: .
+      target: app
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=production-secret-key-change-me
+    volumes:
+      - app_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # Development service with hot reload
+  app-dev:
+    build:
+      context: .
+      target: base
+    ports:
+      - "5001:5000"
+    environment:
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - SECRET_KEY=dev-secret-key
+    volumes:
+      - .:/app
+      - app_data_dev:/app/data
+    command: python app.py
+    profiles:
+      - dev
+
+  # Testing service
+  test:
+    build:
+      context: .
+      target: test
+    environment:
+      - FLASK_ENV=testing
+      - SECRET_KEY=test-secret-key
+      - DISPLAY=:99
+    volumes:
+      - ./test-results:/app/test-results
+      - ./tests:/app/tests
+    command: >
+      bash -c "
+        Xvfb :99 -screen 0 1920x1080x24 &
+        sleep 2 &&
+        pytest tests/ --tb=short --html=test-results/report.html --self-contained-html -v
+      "
+    profiles:
+      - test
+
+  # Functional tests only
+  test-functional:
+    build:
+      context: .
+      target: test
+    environment:
+      - FLASK_ENV=testing
+      - SECRET_KEY=test-secret-key
+      - DISPLAY=:99
+    volumes:
+      - ./test-results:/app/test-results
+      - ./tests:/app/tests
+    command: >
+      bash -c "
+        Xvfb :99 -screen 0 1920x1080x24 &
+        sleep 2 &&
+        pytest tests/functional/ --tb=short --html=test-results/functional-report.html --self-contained-html -v
+      "
+    profiles:
+      - test
+
+  # Security tests only
+  test-security:
+    build:
+      context: .
+      target: test
+    environment:
+      - FLASK_ENV=testing
+      - SECRET_KEY=test-secret-key
+      - DISPLAY=:99
+    volumes:
+      - ./test-results:/app/test-results
+      - ./tests:/app/tests
+    command: >
+      bash -c "
+        Xvfb :99 -screen 0 1920x1080x24 &
+        sleep 2 &&
+        pytest tests/non_functional/test_security.py --tb=short --html=test-results/security-report.html --self-contained-html -v
+      "
+    profiles:
+      - test
+
+  # Performance tests only
+  test-performance:
+    build:
+      context: .
+      target: test
+    environment:
+      - FLASK_ENV=testing
+      - SECRET_KEY=test-secret-key
+      - DISPLAY=:99
+    volumes:
+      - ./test-results:/app/test-results
+      - ./tests:/app/tests
+    command: >
+      bash -c "
+        Xvfb :99 -screen 0 1920x1080x24 &
+        sleep 2 &&
+        pytest tests/non_functional/test_performance.py --tb=short --html=test-results/performance-report.html --self-contained-html -v
+      "
+    profiles:
+      - test
+
+  # Load testing with Locust
+  load-test:
+    build:
+      context: .
+      target: test
+    ports:
+      - "8089:8089"
+    environment:
+      - FLASK_ENV=testing
+    volumes:
+      - ./tests:/app/tests
+      - ./test-results:/app/test-results
+    command: locust -f tests/non_functional/test_load_locust.py --host=http://app:5000 --web-host=0.0.0.0
+    depends_on:
+      - app
+    profiles:
+      - load-test
+
+  # Headless load testing
+  load-test-headless:
+    build:
+      context: .
+      target: test
+    environment:
+      - FLASK_ENV=testing
+    volumes:
+      - ./tests:/app/tests
+      - ./test-results:/app/test-results
+    command: >
+      bash -c "
+        echo 'Waiting for app to be ready...' &&
+        sleep 10 &&
+        locust -f tests/non_functional/test_load_locust.py --host=http://app:5000 --headless -u 10 -r 2 -t 60s --html test-results/load-test-report.html
+      "
+    depends_on:
+      - app
+    profiles:
+      - load-test
+
+  # CI/CD optimized testing
+  test-ci:
+    build:
+      context: .
+      target: ci
+    environment:
+      - FLASK_ENV=testing
+      - SECRET_KEY=test-secret-key
+      - DISPLAY=:99
+    volumes:
+      - ./test-results:/app/test-results
+    command: >
+      bash -c "
+        Xvfb :99 -screen 0 1920x1080x24 &
+        sleep 2 &&
+        pytest tests/ --tb=short --junitxml=test-results/junit/test-results.xml --cov=app --cov-report=html:test-results/coverage --cov-report=xml:test-results/coverage.xml -v
+      "
+    profiles:
+      - ci
+
+  # Database for persistent testing (if needed)
+  test-db:
+    image: sqlite:latest
+    volumes:
+      - test_db_data:/data
+    profiles:
+      - test-with-db
+
+volumes:
+  app_data:
+    driver: local
+  app_data_dev:
+    driver: local
+  test_db_data:
+    driver: local
+
+networks:
+  default:
+    driver: bridge

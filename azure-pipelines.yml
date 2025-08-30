@@ -1,0 +1,511 @@
+# Azure DevOps Pipeline for Flask Authentication System
+# Demonstrates functional and non-functional testing in CI/CD
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+  paths:
+    exclude:
+      - README.md
+      - docs/*
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+variables:
+  # Build variables
+  pythonVersion: '3.11'
+  vmImageName: 'ubuntu-latest'
+  
+  # Application variables
+  FLASK_ENV: 'testing'
+  SECRET_KEY: 'azure-pipeline-secret-key'
+  
+  # Test variables
+  PYTEST_ADDOPTS: '--tb=short --junitxml=$(Agent.TempDirectory)/test-results.xml --cov=app --cov-report=xml:$(Agent.TempDirectory)/coverage.xml --cov-report=html:$(Agent.TempDirectory)/htmlcov'
+
+stages:
+  # Stage 1: Build and Unit Tests
+  - stage: Build
+    displayName: 'Build and Unit Tests'
+    jobs:
+      - job: Build
+        displayName: 'Build Application'
+        pool:
+          vmImage: $(vmImageName)
+        
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+            displayName: 'Use Python $(pythonVersion)'
+          
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt
+            displayName: 'Install dependencies'
+          
+          - script: |
+              python -m flake8 app.py --count --select=E9,F63,F7,F82 --show-source --statistics
+              python -m flake8 app.py --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+            displayName: 'Lint with flake8'
+            continueOnError: true
+          
+          - script: |
+              python -c "import app; app.init_db()"
+              echo "Database initialized successfully"
+            displayName: 'Initialize database'
+          
+          - script: |
+              python -m pytest tests/unit/ -v --tb=short --junitxml=$(Agent.TempDirectory)/unit-test-results.xml
+            displayName: 'Run unit tests'
+            continueOnError: true
+          
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: '$(Agent.TempDirectory)/unit-test-results.xml'
+              testRunTitle: 'Unit Tests'
+              failTaskOnFailedTests: false
+          
+          - script: |
+              mkdir -p $(Build.ArtifactStagingDirectory)/app
+              cp -r . $(Build.ArtifactStagingDirectory)/app/
+              rm -rf $(Build.ArtifactStagingDirectory)/app/.git
+            displayName: 'Copy application files'
+          
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)/app'
+              ArtifactName: 'flask-app'
+              publishLocation: 'Container'
+
+  # Stage 2: Functional Tests
+  - stage: FunctionalTests
+    displayName: 'Functional Tests'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: APITests
+        displayName: 'API Functional Tests'
+        pool:
+          vmImage: $(vmImageName)
+        
+        steps:
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'flask-app'
+              downloadPath: '$(System.ArtifactsDirectory)'
+          
+          - script: |
+              cp -r $(System.ArtifactsDirectory)/flask-app/* .
+            displayName: 'Copy application files'
+          
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+            displayName: 'Use Python $(pythonVersion)'
+          
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt
+            displayName: 'Install dependencies'
+          
+          - script: |
+              python -m pytest tests/functional/test_api_endpoints.py -v --tb=short --junitxml=$(Agent.TempDirectory)/api-test-results.xml
+            displayName: 'Run API functional tests'
+            env:
+              FLASK_ENV: testing
+              SECRET_KEY: $(SECRET_KEY)
+          
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: '$(Agent.TempDirectory)/api-test-results.xml'
+              testRunTitle: 'API Functional Tests'
+              failTaskOnFailedTests: false
+
+      - job: UITests
+        displayName: 'UI Functional Tests'
+        pool:
+          vmImage: $(vmImageName)
+        
+        steps:
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'flask-app'
+              downloadPath: '$(System.ArtifactsDirectory)'
+          
+          - script: |
+              cp -r $(System.ArtifactsDirectory)/flask-app/* .
+            displayName: 'Copy application files'
+          
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+            displayName: 'Use Python $(pythonVersion)'
+          
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt
+            displayName: 'Install dependencies'
+          
+          - script: |
+              # Install Chrome
+              wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+              echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+              sudo apt-get update
+              sudo apt-get install -y google-chrome-stable
+              
+              # Install Xvfb for headless testing
+              sudo apt-get install -y xvfb
+            displayName: 'Install Chrome and Xvfb'
+          
+          - script: |
+              export DISPLAY=:99
+              Xvfb :99 -screen 0 1920x1080x24 &
+              sleep 3
+              python -m pytest tests/functional/test_ui_selenium.py -v --tb=short --junitxml=$(Agent.TempDirectory)/ui-test-results.xml
+            displayName: 'Run UI functional tests'
+            env:
+              FLASK_ENV: testing
+              SECRET_KEY: $(SECRET_KEY)
+              DISPLAY: ':99'
+          
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: '$(Agent.TempDirectory)/ui-test-results.xml'
+              testRunTitle: 'UI Functional Tests'
+              failTaskOnFailedTests: false
+
+  # Stage 3: Security Tests
+  - stage: SecurityTests
+    displayName: 'Security Tests'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: SecurityScan
+        displayName: 'Security Testing'
+        pool:
+          vmImage: $(vmImageName)
+        
+        steps:
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'flask-app'
+              downloadPath: '$(System.ArtifactsDirectory)'
+          
+          - script: |
+              cp -r $(System.ArtifactsDirectory)/flask-app/* .
+            displayName: 'Copy application files'
+          
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+            displayName: 'Use Python $(pythonVersion)'
+          
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt
+            displayName: 'Install dependencies'
+          
+          - script: |
+              python -m bandit -r app.py -f json -o $(Agent.TempDirectory)/bandit-report.json || true
+              python -m bandit -r app.py -f txt -o $(Agent.TempDirectory)/bandit-report.txt || true
+            displayName: 'Run Bandit security scan'
+            continueOnError: true
+          
+          - script: |
+              # Install Chrome for security UI tests
+              wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+              echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+              sudo apt-get update
+              sudo apt-get install -y google-chrome-stable xvfb
+            displayName: 'Install Chrome for security tests'
+          
+          - script: |
+              export DISPLAY=:99
+              Xvfb :99 -screen 0 1920x1080x24 &
+              sleep 3
+              python -m pytest tests/non_functional/test_security.py -v --tb=short --junitxml=$(Agent.TempDirectory)/security-test-results.xml
+            displayName: 'Run security tests'
+            env:
+              FLASK_ENV: testing
+              SECRET_KEY: $(SECRET_KEY)
+              DISPLAY: ':99'
+          
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: '$(Agent.TempDirectory)/security-test-results.xml'
+              testRunTitle: 'Security Tests'
+              failTaskOnFailedTests: false
+          
+          - task: PublishBuildArtifacts@1
+            condition: succeededOrFailed()
+            inputs:
+              PathtoPublish: '$(Agent.TempDirectory)'
+              ArtifactName: 'security-reports'
+              publishLocation: 'Container'
+
+  # Stage 4: Performance Tests
+  - stage: PerformanceTests
+    displayName: 'Performance Tests'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: PerformanceTest
+        displayName: 'Performance Testing'
+        pool:
+          vmImage: $(vmImageName)
+        
+        steps:
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'flask-app'
+              downloadPath: '$(System.ArtifactsDirectory)'
+          
+          - script: |
+              cp -r $(System.ArtifactsDirectory)/flask-app/* .
+            displayName: 'Copy application files'
+          
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+            displayName: 'Use Python $(pythonVersion)'
+          
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt
+            displayName: 'Install dependencies'
+          
+          - script: |
+              python -m pytest tests/non_functional/test_performance.py -v --tb=short --junitxml=$(Agent.TempDirectory)/performance-test-results.xml
+            displayName: 'Run performance tests'
+            env:
+              FLASK_ENV: testing
+              SECRET_KEY: $(SECRET_KEY)
+          
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: '$(Agent.TempDirectory)/performance-test-results.xml'
+              testRunTitle: 'Performance Tests'
+              failTaskOnFailedTests: false
+
+      - job: LoadTest
+        displayName: 'Load Testing'
+        pool:
+          vmImage: $(vmImageName)
+        
+        steps:
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'flask-app'
+              downloadPath: '$(System.ArtifactsDirectory)'
+          
+          - script: |
+              cp -r $(System.ArtifactsDirectory)/flask-app/* .
+            displayName: 'Copy application files'
+          
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+            displayName: 'Use Python $(pythonVersion)'
+          
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt
+            displayName: 'Install dependencies'
+          
+          - script: |
+              # Start the application in background
+              python app.py &
+              APP_PID=$!
+              sleep 10
+              
+              # Run load test
+              locust -f tests/non_functional/test_load_locust.py --host=http://localhost:5000 --headless -u 10 -r 2 -t 60s --html $(Agent.TempDirectory)/load-test-report.html
+              
+              # Stop the application
+              kill $APP_PID
+            displayName: 'Run load tests'
+            env:
+              FLASK_ENV: testing
+              SECRET_KEY: $(SECRET_KEY)
+          
+          - task: PublishBuildArtifacts@1
+            condition: succeededOrFailed()
+            inputs:
+              PathtoPublish: '$(Agent.TempDirectory)/load-test-report.html'
+              ArtifactName: 'load-test-report'
+              publishLocation: 'Container'
+
+  # Stage 5: Docker Build and Test
+  - stage: DockerTests
+    displayName: 'Docker Build and Test'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: DockerBuild
+        displayName: 'Docker Build and Test'
+        pool:
+          vmImage: $(vmImageName)
+        
+        steps:
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'flask-app'
+              downloadPath: '$(System.ArtifactsDirectory)'
+          
+          - script: |
+              cp -r $(System.ArtifactsDirectory)/flask-app/* .
+            displayName: 'Copy application files'
+          
+          - task: Docker@2
+            displayName: 'Build Docker image'
+            inputs:
+              command: 'build'
+              Dockerfile: 'Dockerfile'
+              tags: 'flask-auth-system:$(Build.BuildId)'
+              arguments: '--target app'
+          
+          - task: Docker@2
+            displayName: 'Build test Docker image'
+            inputs:
+              command: 'build'
+              Dockerfile: 'Dockerfile'
+              tags: 'flask-auth-system-test:$(Build.BuildId)'
+              arguments: '--target ci'
+          
+          - script: |
+              # Test the application container
+              docker run -d --name test-app -p 5000:5000 flask-auth-system:$(Build.BuildId)
+              sleep 10
+              
+              # Health check
+              curl -f http://localhost:5000/api/health || exit 1
+              
+              # Stop container
+              docker stop test-app
+              docker rm test-app
+            displayName: 'Test Docker container'
+          
+          - script: |
+              # Run tests in Docker container
+              mkdir -p $(Agent.TempDirectory)/docker-test-results
+              docker run --rm -v $(Agent.TempDirectory)/docker-test-results:/app/test-results flask-auth-system-test:$(Build.BuildId)
+            displayName: 'Run tests in Docker'
+            continueOnError: true
+          
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: '$(Agent.TempDirectory)/docker-test-results/junit/test-results.xml'
+              testRunTitle: 'Docker Tests'
+              failTaskOnFailedTests: false
+          
+          - task: PublishCodeCoverageResults@1
+            condition: succeededOrFailed()
+            inputs:
+              codeCoverageTool: 'Cobertura'
+              summaryFileLocation: '$(Agent.TempDirectory)/docker-test-results/coverage.xml'
+              reportDirectory: '$(Agent.TempDirectory)/docker-test-results/coverage'
+
+  # Stage 6: Integration and Deployment Tests
+  - stage: Integration
+    displayName: 'Integration Tests'
+    dependsOn: 
+      - FunctionalTests
+      - SecurityTests
+      - PerformanceTests
+    condition: succeeded()
+    jobs:
+      - job: IntegrationTest
+        displayName: 'End-to-End Integration'
+        pool:
+          vmImage: $(vmImageName)
+        
+        steps:
+          - task: DownloadBuildArtifacts@0
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'flask-app'
+              downloadPath: '$(System.ArtifactsDirectory)'
+          
+          - script: |
+              cp -r $(System.ArtifactsDirectory)/flask-app/* .
+            displayName: 'Copy application files'
+          
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+            displayName: 'Use Python $(pythonVersion)'
+          
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt
+            displayName: 'Install dependencies'
+          
+          - script: |
+              # Install Chrome for E2E tests
+              wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+              echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+              sudo apt-get update
+              sudo apt-get install -y google-chrome-stable xvfb
+            displayName: 'Install Chrome'
+          
+          - script: |
+              export DISPLAY=:99
+              Xvfb :99 -screen 0 1920x1080x24 &
+              sleep 3
+              
+              # Run comprehensive integration tests
+              python -m pytest tests/ -m "not slow" -v --tb=short --junitxml=$(Agent.TempDirectory)/integration-test-results.xml --cov=app --cov-report=xml:$(Agent.TempDirectory)/integration-coverage.xml
+            displayName: 'Run integration tests'
+            env:
+              FLASK_ENV: testing
+              SECRET_KEY: $(SECRET_KEY)
+              DISPLAY: ':99'
+          
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: '$(Agent.TempDirectory)/integration-test-results.xml'
+              testRunTitle: 'Integration Tests'
+              failTaskOnFailedTests: true
+          
+          - task: PublishCodeCoverageResults@1
+            condition: succeededOrFailed()
+            inputs:
+              codeCoverageTool: 'Cobertura'
+              summaryFileLocation: '$(Agent.TempDirectory)/integration-coverage.xml'
+
+# Additional pipeline configurations
+schedules:
+  - cron: "0 2 * * *"  # Run nightly at 2 AM
+    displayName: 'Nightly full test run'
+    branches:
+      include:
+        - main
+    always: true
