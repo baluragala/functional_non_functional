@@ -49,10 +49,10 @@ def test_client(test_app):
 @pytest.fixture(scope='session')
 def live_server(test_app):
     """Start a live server for Selenium tests"""
-    def run_server():
-        test_app.run(host='127.0.0.1', port=TEST_PORT, debug=False, use_reloader=False)
+    from werkzeug.serving import make_server
     
-    server_thread = threading.Thread(target=run_server, daemon=True)
+    server = make_server('127.0.0.1', TEST_PORT, test_app, threaded=True)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
     
     # Wait for server to start
@@ -69,7 +69,8 @@ def live_server(test_app):
     
     yield BASE_URL
     
-    # Server will be cleaned up automatically when the process ends
+    # Shutdown server
+    server.shutdown()
 
 @pytest.fixture
 def chrome_driver():
@@ -178,8 +179,9 @@ def invalid_usernames():
         'a' * 21,  # Too long
         'user@name',  # Invalid characters
         'user name',  # Spaces
-        '123',  # Only numbers
         'user-name',  # Hyphens
+        'user.name',  # Dots
+        'user#name',  # Hash
     ]
 
 @pytest.fixture

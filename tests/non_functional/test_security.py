@@ -116,10 +116,13 @@ class TestInputValidation:
             # Test in various endpoints
             response = test_client.get(f'/api/login-attempts/{payload}')
             
-            # Should not expose system files
-            assert response.status_code == 200
-            data = json.loads(response.data)
-            assert isinstance(data, list)  # Should return empty list, not file contents
+            # Should not expose system files - either 200 with empty list or 404
+            assert response.status_code in [200, 404]
+            if response.status_code == 200:
+                data = json.loads(response.data)
+                assert isinstance(data, list)  # Should return empty list, not file contents
+                # Should not contain system file contents
+                assert not any('root:' in str(item) for item in data if isinstance(item, str))
     
     def test_ldap_injection_prevention(self, test_client):
         """Test LDAP injection prevention (if applicable)"""

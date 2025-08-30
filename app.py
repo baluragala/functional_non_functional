@@ -61,6 +61,36 @@ def init_db():
 
 def validate_email(email):
     """Validate email format"""
+    if not email or len(email) == 0:
+        return False
+    
+    # Check for basic structure
+    if '@' not in email or email.count('@') != 1:
+        return False
+    
+    local, domain = email.split('@')
+    
+    # Check local part
+    if not local or len(local) == 0:
+        return False
+    
+    # Check domain part
+    if not domain or len(domain) == 0:
+        return False
+    
+    # Check for consecutive dots
+    if '..' in email:
+        return False
+    
+    # Check for spaces
+    if ' ' in email:
+        return False
+    
+    # Check domain has at least one dot and TLD
+    if '.' not in domain:
+        return False
+    
+    # More comprehensive regex
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
 

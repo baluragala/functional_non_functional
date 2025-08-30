@@ -139,7 +139,7 @@ class TestUsernameValidation:
     
     def test_username_edge_cases(self):
         """Test username edge cases"""
-        # Only numbers
+        # Only numbers (should be valid)
         is_valid, message = validate_username('123')
         assert is_valid == True
         
